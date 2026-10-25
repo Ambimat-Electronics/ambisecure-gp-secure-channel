@@ -1,0 +1,20 @@
+[project]
+name = "ambisecure-gp-secure-channel"
+version = "0.1.0"
+description = "Reference host-side GlobalPlatform SCP03 (AES-128) and SCP02 (3DES) secure channels"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.9"
+dependencies = ["pycryptodome>=3.10"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+pcsc = ["pyscard"]
+
+[project.urls]
+Source = "https://github.com/Ambimat-Electronics/ambisecure-gp-secure-channel"
+
+[tool.pytest.ini_options]
+pythonpath = [".", "tests"]
+testpaths = ["tests"]

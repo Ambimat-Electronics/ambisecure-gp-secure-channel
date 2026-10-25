@@ -1,0 +1,8 @@
+ambisecure-gp-secure-channel
+Copyright 2026 Ambimat Electronics (AmbiSecure)
+
+This product includes software developed by Ambimat Electronics.
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Runtime dependency: pycryptodome (BSD-2-Clause, Unlicense and MIT parts), not bundled.
+Optional example dependency: pyscard (LGPL-2.1-or-later), not bundled.

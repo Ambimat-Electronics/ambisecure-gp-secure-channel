@@ -50,3 +50,17 @@ def test_parse_scp02():
     assert r.card_challenge == bytes(range(6)) and r.card_cryptogram == bytes(range(8))
     with pytest.raises(ValueError):
         apdu.parse_initialize_update_scp02(data + b"\x00")
+
+
+SCP03_RSP = bytes(10) + b"\x30\x03\x70" + bytes(16) + b"\x00\x00\x01"
+SCP02_RSP = bytes(10) + b"\x20\x02\x00\x01" + bytes(14)
+
+
+@pytest.mark.parametrize("parse, rsp, kvn", [(apdu.parse_initialize_update_scp03, SCP03_RSP, 0x30),
+                                             (apdu.parse_initialize_update_scp02, SCP02_RSP, 0x20)])
+def test_key_version_check(parse, rsp, kvn):
+    assert parse(rsp).key_version == kvn                      # no expectation: not checked
+    assert parse(rsp, 0x00).key_version == kvn                # P1 00 = card picks the key set
+    assert parse(rsp, kvn).key_version == kvn
+    with pytest.raises(ValueError, match="key version"):
+        parse(rsp, kvn + 1)

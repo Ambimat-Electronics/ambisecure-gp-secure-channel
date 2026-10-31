@@ -133,3 +133,94 @@ def test_rejects_invalid_parameters():
 def test_repr_does_not_leak_keys():
     s = session()
     assert s.s_enc.hex() not in repr(s) and s.s_mac.hex() not in repr(s)
+
+
+# --- v0.1.1: security levels (Amendment D v1.1.2, Table 7-6) -----------------------------
+
+@pytest.mark.parametrize("level", scp03.SECURITY_LEVELS)
+def test_every_defined_security_level_is_accepted(level):
+    s = session(level)
+    assert s.external_authenticate()[2] == level
+
+
+@pytest.mark.parametrize("level", [v for v in range(256) if v not in scp03.SECURITY_LEVELS])
+def test_every_undefined_security_level_is_rejected(level):
+    with pytest.raises(ValueError, match="invalid security level"):
+        session(level)
+
+
+def test_level_31_is_rejected():
+    """0x31 (R-ENC without C-DEC) used to be accepted with a counter that never moved."""
+    with pytest.raises(ValueError):
+        session(scp03.C_MAC | scp03.R_MAC | scp03.R_ENCRYPTION)
+
+
+@pytest.mark.parametrize("level", scp03.SECURITY_LEVELS)
+def test_encryption_counter_moves_only_with_c_decryption(level):
+    s = session(level)
+    s.external_authenticate()
+    s.wrap(bytes.fromhex("80F22002"))
+    s.wrap(bytes.fromhex("80F28002024F0000"))
+    assert s.encryption_counter == (2 if level & scp03.C_DECRYPTION else 0)
+
+
+def test_no_secure_messaging_level_passes_apdus_through():
+    s = session(0x00)
+    s.external_authenticate()
+    assert s.wrap(bytes.fromhex("80CA006600")) == bytes.fromhex("80CA006600")
+    assert s.unwrap(b"\x66\x00\x90\x00") == b"\x66\x00\x90\x00"
+
+
+# --- v0.1.1: failed operations leave the session unchanged --------------------------------
+
+def state(s):
+    return (s.mac_chaining_value, s.encryption_counter)
+
+
+@pytest.mark.parametrize("level", [scp03.C_MAC, 0x33])
+def test_failed_wrap_leaves_state_unchanged(level):
+    s, fresh = session(level), session(level)
+    s.external_authenticate()
+    fresh.external_authenticate()
+    before = state(s)
+    too_long = bytes.fromhex("80E20000F8") + bytes(248)          # 248 + 8 > 255 once wrapped
+    with pytest.raises(ValueError, match="exceeds short APDU length"):
+        s.wrap(too_long)
+    assert state(s) == before
+    ok = bytes.fromhex("80F28002024F0000")
+    assert s.wrap(ok) == fresh.wrap(ok)                          # as if the failure never happened
+
+
+def test_failed_r_mac_leaves_state_unchanged_and_session_usable():
+    s = session(scp03.C_MAC | scp03.R_MAC)
+    s.external_authenticate()
+    s.wrap(bytes.fromhex("80CA006600"))
+    data, sw = bytes.fromhex("6603A1B2C3"), b"\x90\x00"
+    before = state(s)
+    with pytest.raises(ValueError, match="R-MAC verification failed"):
+        s.unwrap(data + bytes(8) + sw)
+    assert state(s) == before
+    rmac = ref_cmac(s.s_rmac, s.mac_chaining_value + data + sw)[:8]
+    assert s.unwrap(data + rmac + sw) == data + sw
+
+
+@pytest.mark.parametrize("response", ["90", "", "6603A19000"])
+def test_malformed_response_leaves_state_unchanged(response):
+    s = session(scp03.C_MAC | scp03.R_MAC)
+    s.external_authenticate()
+    before = state(s)
+    with pytest.raises(ValueError):
+        s.unwrap(bytes.fromhex(response))
+    assert state(s) == before
+
+
+def test_failed_r_decryption_leaves_state_unchanged():
+    s = session(0x33)
+    s.external_authenticate()
+    s.wrap(bytes.fromhex("80CA006600"))
+    garbage, sw = bytes(16), b"\x90\x00"                          # authentic R-MAC, invalid padding inside
+    rmac = ref_cmac(s.s_rmac, s.mac_chaining_value + garbage + sw)[:8]
+    before = state(s)
+    with pytest.raises(ValueError, match="padding"):
+        s.unwrap(garbage + rmac + sw)
+    assert state(s) == before

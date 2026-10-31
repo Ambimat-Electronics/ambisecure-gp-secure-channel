@@ -86,6 +86,9 @@ class Session:
     def _wrap(self, apdu: bytes, encrypt: bool) -> bytes:
         header, data, le = split_command(apdu)
         header = bytes([header[0] | 0x04]) + header[1:]
+        body = DES3.new(self.s_enc, DES3.MODE_CBC, iv=bytes(8)).encrypt(pad80(data)) if encrypt and data else data
+        if len(body) + 8 > 255:                         # checked before any state changes
+            raise ValueError("wrapped command exceeds short APDU length")
         if self.last_mac is None:
             icv = bytes(8)
         elif self.icv_encrypt:
@@ -95,8 +98,4 @@ class Session:
         # C-MAC over the modified header and the *plaintext* data
         mac = retail_mac(self.s_mac, header + bytes([len(data) + 8]) + data, icv)
         self.last_mac = mac
-        if encrypt and data:
-            data = DES3.new(self.s_enc, DES3.MODE_CBC, iv=bytes(8)).encrypt(pad80(data))
-        if len(data) + 8 > 255:
-            raise ValueError("wrapped command exceeds short APDU length")
-        return header + bytes([len(data) + 8]) + data + mac + le
+        return header + bytes([len(body) + 8]) + body + mac + le

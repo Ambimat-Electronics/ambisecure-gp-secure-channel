@@ -57,8 +57,9 @@ every other value, before any APDU is built:
 
 `10`, `30` and `31` are rejected. Version 0.1.0 accepted them; with `31` the
 response decryption used an encryption counter that never advanced.
-The card's i parameter says what it supports: bit `20` = R-MAC, bit `40` =
-R-ENCRYPTION (Amendment D Table 5-1), so `11`/`13` need i & `20` and `33` needs i & `60`.
+The card's i parameter says what it supports (Amendment D Table 5-1, bits b7 b6):
+`01` = R-MAC only, `11` = R-MAC and R-ENCRYPTION. So levels `11`/`13` need i & `20`,
+and `33` needs i & `60` = `60`.
 
 ### Session state on errors
 
@@ -170,8 +171,9 @@ explains each step.
 
 ## Hardware verification
 
-Run on 2026-10-31 with `examples/pcsc_scp03_open.py` and an equivalent script
-that also recorded a transcript. Details and the sanitised transcript:
+Run on 2026-10-31: two sessions with a script that follows
+`examples/pcsc_scp03_open.py` and records a transcript, then one session with the
+published example itself. Details and the sanitised transcript:
 [docs/hardware-verification-2026-10-31.md](docs/hardware-verification-2026-10-31.md).
 
 | Item | Value |
@@ -180,11 +182,12 @@ that also recorded a transcript. Details and the sanitised transcript:
 | Reader | Gemalto USB SmartCard Reader (USB `08E6:3437`), T=1 |
 | Card | NXP-fabricated Java Card test card, GlobalPlatform 2.3, SCP03 i=`70`, one AES-128 key set (KVN `FF`) |
 | Keys | test keys supplied by the card owner; not recorded anywhere in this repository |
-| Result | SELECT ISD → INITIALIZE UPDATE → card cryptogram verified → EXTERNAL AUTHENTICATE level `33` → wrapped GET STATUS: all `9000`; R-MAC verified and R-ENCRYPTION removed; three sessions, same result |
+| Result | SELECT ISD → INITIALIZE UPDATE → card cryptogram verified → EXTERNAL AUTHENTICATE level `33` → wrapped GET STATUS: all `9000`; R-MAC verified and R-ENCRYPTION removed; three sessions (two recorded transcripts plus one example run), same result |
 | Not covered | SCP02 on hardware, levels other than `33`, AES-192/256, other cards and readers |
 
-Only SELECT, INITIALIZE UPDATE, EXTERNAL AUTHENTICATE and GET STATUS were sent; no
-command that changes keys, content or lifecycle. Negative checks (wrong key, wrong
+Commands sent: SELECT, GET DATA (card identification, before authentication),
+INITIALIZE UPDATE, EXTERNAL AUTHENTICATE and GET STATUS. None changes keys, content
+or life-cycle state. Negative checks (wrong key, wrong
 key version, level `31`) were made on the host against the real card response, so
 no failed authentication reached the card.
 
@@ -197,6 +200,7 @@ no failed authentication reached the card.
 | `not an SCP03 response (SCP id 0x02)` | `parse_initialize_update_scp03` | The key set is SCP02; use `parse_initialize_update_scp02` and `scp02.Session`. |
 | `SCP03 S8 INITIALIZE UPDATE response must be 29 or 32 bytes` | `parse_initialize_update_scp03` | S16 mode or a non-GP response; S16 is not implemented. |
 | `invalid security level 0xNN` | `scp03.Session` | P1 is not one of `00 01 03 11 13 33`. |
+| EXTERNAL AUTHENTICATE rejected at level `33` or `13` | card | The card's i parameter does not advertise R-MAC (i & `20`) or R-ENCRYPTION (i & `60` = `60`). `examples/pcsc_scp03_open.py` always requests `33`; use `13` or `03` for such cards. |
 | `R-MAC verification failed` | `Session.unwrap` | Wrong S-RMAC (keys), a response that does not belong to the last wrapped command, or a security level without R-MAC on the card side. Session state is unchanged. |
 | `response too short to carry an R-MAC` | `Session.unwrap` | A `9000`/`62xx`/`63xx` response without the 8-byte R-MAC while R-MAC is on. |
 | `invalid ISO/IEC 9797-1 method 2 padding` | `Session.unwrap` | R-ENCRYPTION removal with the wrong key or counter. |

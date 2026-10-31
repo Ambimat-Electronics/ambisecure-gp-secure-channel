@@ -87,6 +87,8 @@ def run(root):
     fn = method(classes["SCP02_Test"], "test_mac_command")
     plains = [value(c.args[0], env) for c in calls(fn, "wrap_cmd_apdu")]
     wraps = [c.args[1].value for c in calls(fn, "assertEqual")]
+    if len(plains) != len(wraps) or len(expected) != 2:
+        raise ValueError("unexpected SCP02 test layout")
     for n, (plain, want) in enumerate(zip(plains, wraps), 1):
         check(f"SCP02 C-MAC case {n}", s.wrap(plain).hex().upper() == want)
 
@@ -125,7 +127,7 @@ def main():
         print(f"WARNING: not the pinned commit {PINNED_COMMIT}; results may differ")
     try:
         results = run(root)
-    except (OSError, SyntaxError, KeyError, StopIteration, IndexError) as e:
+    except (OSError, SyntaxError, KeyError, StopIteration, IndexError, AttributeError, ValueError) as e:
         print(f"ERROR: could not read the pySim test vectors: {e!r}")
         sys.exit(2)
     print(f"{sum(results)}/{len(results)} values match -> {'PASS' if all(results) else 'FAIL'}")

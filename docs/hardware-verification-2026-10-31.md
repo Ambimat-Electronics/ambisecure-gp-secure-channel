@@ -1,7 +1,9 @@
 # Hardware verification, 2026-10-31
 
-One SCP03 session per run, three runs (13:22Z, 13:23Z, 13:27Z), same result. The
-transcript below is run 2. Values that are derived from the static keys (card and
+One SCP03 session per run, three runs, same result: runs 1 and 2 (13:22Z, 13:23Z)
+with a transcript-recording script that follows the example; run 3 (13:27Z) with
+`examples/pcsc_scp03_open.py` unchanged, which printed `KVN FF, i 70` and the same ISD
+status as below. The transcript below is run 2. Values that are derived from the static keys (card and
 host cryptograms, MACs, encrypted data), the key diversification data and the card
 challenge are redacted. No key value appears anywhere in this repository.
 
@@ -48,7 +50,7 @@ E3 26                       GP registry entry
   anything further to the card: a key with one bit flipped fails the card
   cryptogram check; `expected_key_version=0x01` is rejected (card answered `FF`);
   level `31` is rejected before any APDU. Failed authentications sent to the card: 0.
-- Commands sent: SELECT, GET DATA (CPLC `9F7F`, Card Data `0066`, Key Information
-  `00E0`, and a proprietary read `00FE`/`DF28`), INITIALIZE UPDATE, EXTERNAL
-  AUTHENTICATE, GET STATUS. None changes keys, content or life-cycle state; each
+- Commands sent: SELECT, GET DATA (INS `CA`: CPLC `9F7F`, Card Data `0066`, Key
+  Information `00E0`, and `80CA00FE02DF2800`, a proprietary card-identification tag),
+  INITIALIZE UPDATE, EXTERNAL AUTHENTICATE, GET STATUS. None changes keys, content or life-cycle state; each
   INITIALIZE UPDATE advances the card's SCP03 sequence counter, as the protocol requires.

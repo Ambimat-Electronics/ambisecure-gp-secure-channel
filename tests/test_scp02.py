@@ -66,3 +66,19 @@ def test_c_enc_zero_iv_and_mac_over_plaintext():
 def test_rejects_unsupported_levels():
     with pytest.raises(ValueError):
         session(0x10)                                       # R-MAC not implemented
+
+
+@pytest.mark.parametrize("level, size", [(scp02.C_MAC, 248), (scp02.C_MAC | scp02.C_DECRYPTION, 240)])
+def test_oversize_command_fails_cleanly_without_touching_the_mac_chain(level, size):
+    s = session(level)
+    s.external_authenticate()
+    before = s.last_mac
+    with pytest.raises(ValueError, match="exceeds short APDU length"):
+        s.wrap(bytes([0x80, 0xE2, 0x00, 0x00, size]) + bytes(size))
+    assert s.last_mac == before
+
+
+def test_largest_mac_only_command_still_fits():
+    s = session()
+    s.external_authenticate()
+    assert len(s.wrap(bytes([0x80, 0xE2, 0x00, 0x00, 247]) + bytes(247))) == 5 + 255

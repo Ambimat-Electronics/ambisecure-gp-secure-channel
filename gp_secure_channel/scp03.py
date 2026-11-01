@@ -23,6 +23,12 @@ C_DECRYPTION = 0x02
 R_MAC = 0x10
 R_ENCRYPTION = 0x20
 
+# The only P1 values Amendment D v1.1.2 defines (Table 7-6): 00, 01, 03, 11, 13, 33.
+# 10, 30 and 31 also pass a per-bit "encryption needs its MAC" rule but are not
+# defined; 31 would apply R-ENCRYPTION with an encryption counter that never moves.
+SECURITY_LEVELS = (0x00, C_MAC, C_MAC | C_DECRYPTION, C_MAC | R_MAC, C_MAC | C_DECRYPTION | R_MAC,
+                   C_MAC | C_DECRYPTION | R_MAC | R_ENCRYPTION)
+
 
 def cmac(key: bytes, data: bytes) -> bytes:
     """AES-CMAC, NIST SP 800-38B."""
@@ -55,10 +61,8 @@ def unpad80(data: bytes) -> bytes:
 
 
 def _check_level(level: int) -> None:
-    if level & ~(C_MAC | C_DECRYPTION | R_MAC | R_ENCRYPTION):
-        raise ValueError(f"unsupported security level 0x{level:02X}")
-    if (level & C_DECRYPTION and not level & C_MAC) or (level & R_ENCRYPTION and not level & R_MAC):
-        raise ValueError(f"invalid security level 0x{level:02X}: encryption requires the matching MAC")
+    if level not in SECURITY_LEVELS:
+        raise ValueError(f"invalid security level 0x{level:02X}: SCP03 defines only 00, 01, 03, 11, 13 and 33")
 
 
 class Session:
@@ -99,9 +103,6 @@ class Session:
         """EXTERNAL AUTHENTICATE with C-MAC (always MAC-only, MAC chaining value starts at zero)."""
         return self._mac(external_authenticate(self.security_level, self.host_cryptogram))
 
-    def _counter_block(self) -> bytes:
-        return self.encryption_counter.to_bytes(16, "big")
-
     def _mac(self, apdu: bytes) -> bytes:
         header, data, le = split_command(apdu)
         header = bytes([header[0] | 0x04]) + header[1:]
@@ -109,27 +110,37 @@ class Session:
         if lc > 255:
             raise ValueError("wrapped command exceeds short APDU length")
         full = cmac(self.s_mac, self.mac_chaining_value + header + bytes([lc]) + data)
-        self.mac_chaining_value = full                 # 16-byte chaining value
+        self.mac_chaining_value = full                 # 16-byte chaining value, set only on success
         return header + bytes([lc]) + data + full[:8] + le
 
     def wrap(self, apdu: bytes) -> bytes:
-        """Apply C-DECRYPTION (if enabled) then C-MAC to a plain short command APDU."""
+        """Apply C-DECRYPTION (if enabled) then C-MAC to a plain short command APDU.
+
+        On any error the session is left unchanged: no command was produced, so the
+        card's counter and MAC chain have not moved either.
+        """
         if not self.security_level & C_MAC:
             return apdu
         header, data, le = split_command(apdu)
+        counter = self.encryption_counter
         if self.security_level & C_DECRYPTION:
-            self.encryption_counter += 1               # incremented for every command, data or not
+            counter += 1                               # incremented for every command, data or not
             if data:
                 # ICV = AES-ECB(S-ENC, counter), NOT the raw counter
-                icv = AES.new(self.s_enc, AES.MODE_ECB).encrypt(self._counter_block())
+                icv = AES.new(self.s_enc, AES.MODE_ECB).encrypt(counter.to_bytes(16, "big"))
                 data = AES.new(self.s_enc, AES.MODE_CBC, iv=icv).encrypt(pad80(data))
                 if len(data) > 255:
                     raise ValueError("encrypted data exceeds short APDU length")
         body = bytes([len(data)]) + data if data else b""
-        return self._mac(header + body + le)
+        wrapped = self._mac(header + body + le)
+        self.encryption_counter = counter
+        return wrapped
 
     def unwrap(self, response: bytes) -> bytes:
-        """Verify R-MAC and remove R-ENCRYPTION (if enabled). Returns data | SW1 SW2."""
+        """Verify R-MAC and remove R-ENCRYPTION (if enabled). Returns data | SW1 SW2.
+
+        Never changes session state, so a failed check leaves the session as it was.
+        """
         if len(response) < 2:
             raise ValueError("response shorter than status word")
         if not self.security_level & R_MAC:
@@ -145,6 +156,6 @@ class Session:
             raise ValueError("R-MAC verification failed")
         if self.security_level & R_ENCRYPTION and data:
             # ICV = AES-ECB(S-ENC, counter with its most significant byte set to 0x80)
-            icv = AES.new(self.s_enc, AES.MODE_ECB).encrypt(b"\x80" + self._counter_block()[1:])
+            icv = AES.new(self.s_enc, AES.MODE_ECB).encrypt(b"\x80" + self.encryption_counter.to_bytes(15, "big"))
             data = unpad80(AES.new(self.s_enc, AES.MODE_CBC, iv=icv).decrypt(data))
         return data + sw
